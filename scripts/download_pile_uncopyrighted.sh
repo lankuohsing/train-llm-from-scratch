@@ -134,8 +134,9 @@ verify_file() {
 }
 
 download_file() {
-    local destination="$root/$1" url="$base_url/$1"
-    local label=$1 part meta saved_size saved_sha attempt current_size status curl_code
+    local remote_path=$1 relative_path=$2
+    local destination="$root/$relative_path" url="$base_url/$remote_path"
+    local label=$relative_path part meta saved_size saved_sha attempt current_size status curl_code
     part="$destination.part"
     meta="$part.meta"
     echo "[$label] 读取远端文件信息..."
@@ -208,10 +209,10 @@ download_file() {
     done
 }
 
-download_file val/val.jsonl.zst
-download_file test/test.jsonl.zst
+download_file val.jsonl.zst val/val.jsonl.zst
+download_file test.jsonl.zst test/test.jsonl.zst
 for ((i=0; i<30; i++)); do
     printf -v shard '%02d' "$i"
-    download_file "train/$shard.jsonl.zst"
+    download_file "train/$shard.jsonl.zst" "train/$shard.jsonl.zst"
 done
 echo "全部下载完成：$root"
