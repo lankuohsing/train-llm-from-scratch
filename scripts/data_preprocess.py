@@ -1,116 +1,167 @@
-import os
-import json
-import zstandard as zstd
-import tiktoken
-import h5py
-from tqdm import tqdm
+"""将下载好的 Pile .jsonl.zst 文件分词并写入 HDF5。
+
+默认每个文件只处理前 1000 条记录，便于快速检查；传入 --all_data 处理完整文件。
+"""
+
 import argparse
-from typing import Optional
+import json
+import os
+from itertools import islice
+from pathlib import Path
 
-def process_files(input_dir: str, output_file: str, tokenizer_name: str, max_data: Optional[int] = None) -> None:
-    """
-    Process a specified number of lines from each .jsonl.zst file in the input directory
-    and save encoded tokens to an HDF5 file.
+WRITE_CHUNK_TOKENS = 1_000_000
 
-    Args:
-        input_dir (str): Directory containing input .jsonl.zst files.
-        output_file (str): Path to the output HDF5 file.
-        tokenizer_name (str): Name of the tiktoken tokenizer to use (e.g., 'r50k_base').
-        max_data (int, optional): Maximum number of lines to process from each file.
-                                  If None, process all lines.
-    """
-    # Print processing strategy based on max_data
-    if max_data is not None:
-        print(f"You have chosen max_data = {max_data}. Processing only the top {max_data} JSON objects from each file.")
-    else:
-        print("Processing all available JSON objects from each file.")
 
-    # Load the tokenizer using the provided tokenizer name
-    enc = tiktoken.get_encoding(tokenizer_name)
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("必须是正整数")
+    return number
 
-    # Create an HDF5 file for output
-    with h5py.File(output_file, 'w') as out_f:
-        # Initialize the dataset for storing tokenized data
-        dataset = out_f.create_dataset('tokens', (0,), maxshape=(None,), dtype='i')
-        start_index = 0  # Track the starting index for the next batch of tokens
 
-        # Process each .jsonl.zst file in the input directory
-        for filename in sorted(os.listdir(input_dir)):
-            if filename.endswith(".jsonl.zst"):  # Only process .jsonl.zst files
-                in_file = os.path.join(input_dir, filename)
-                print(f"Processing: {in_file}")
+def process_files(
+    input_dir: str,
+    output_file: str,
+    tokenizer_name: str,
+    max_data: int | None = None,
+    write_chunk_tokens: int = WRITE_CHUNK_TOKENS,
+) -> int:
+    """按文件名顺序处理目录中的 .jsonl.zst 文件，返回写入的 token 数。"""
+    import h5py
+    import numpy as np
+    import tiktoken
+    import zstandard as zstd
+    from tqdm import tqdm
 
-                processed_lines = 0  # Counter for processed lines in the current file
+    input_path = Path(input_dir)
+    files = sorted(input_path.glob("*.jsonl.zst"))
+    if not files:
+        raise FileNotFoundError(f"没有找到 .jsonl.zst 文件：{input_path}")
 
-                # Open the compressed .jsonl.zst file for reading
-                with zstd.open(in_file, 'rt', encoding='utf-8') as in_f:
-                    # Iterate over each line in the file
-                    for line in tqdm(in_f, desc=f"Processing {filename}", total=max_data if max_data is not None else None):
-                        try:
-                            # Parse the line as JSON
-                            data = json.loads(line)
-                            text = data.get('text')  # Extract the 'text' field from the JSON object
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = output_path.with_name(output_path.name + ".part")
+    encoder = tiktoken.get_encoding(tokenizer_name)
 
-                            if text:
-                                # Tokenize the text and append an end-of-text token
-                                encoded = enc.encode(text + "<|endoftext|>", allowed_special={'<|endoftext|>'})
-                                encoded_len = len(encoded)
+    total_tokens = 0
+    total_lines = 0
+    kept_docs = 0
+    skipped_docs = 0
+    buffer: list[int] = []
 
-                                # Resize the dataset to accommodate new tokens
-                                end_index = start_index + encoded_len
-                                dataset.resize(dataset.shape[0] + encoded_len, axis=0)
+    with h5py.File(part_path, "w") as out_file:
+        tokens = out_file.create_dataset(
+            "tokens",
+            shape=(0,),
+            maxshape=(None,),
+            dtype="i4",
+            chunks=(write_chunk_tokens,),
+        )
 
-                                # Store the encoded tokens in the dataset
-                                dataset[start_index:end_index] = encoded
-                                start_index = end_index  # Update the start index
-                            else:
-                                # Warn if 'text' key is missing in the JSON object
-                                print(f"Warning: 'text' key missing in line from {filename}")
-                        except json.JSONDecodeError:
-                            # Handle JSON decoding errors
-                            print(f"Warning: Could not decode JSON from line in {filename}")
-                        except Exception as e:
-                            # Handle any other errors
-                            print(f"An error occurred while processing line in {filename}: {e}")
+        def flush() -> None:
+            nonlocal total_tokens
+            if not buffer:
+                return
+            values = np.asarray(buffer, dtype=np.int32)
+            new_total = total_tokens + len(values)
+            tokens.resize((new_total,))
+            tokens[total_tokens:new_total] = values
+            total_tokens = new_total
+            buffer.clear()
 
-                        processed_lines += 1
-                        # Stop processing if max_data limit is reached
-                        if max_data is not None and processed_lines >= max_data:
-                            break
+        for file in files:
+            print(f"正在处理：{file}")
+            with zstd.open(file, "rt", encoding="utf-8") as stream:
+                lines = islice(stream, max_data) if max_data is not None else stream
+                for line in tqdm(lines, total=max_data, desc=file.name, unit="条"):
+                    total_lines += 1
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        skipped_docs += 1
+                        continue
+                    if not isinstance(record, dict):
+                        skipped_docs += 1
+                        continue
+                    text = record.get("text")
+                    if not isinstance(text, str) or not text:
+                        skipped_docs += 1
+                        continue
 
-def main():
-    """
-    Main function to parse arguments, validate directories, and process files.
-    """
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Preprocess PILE dataset files and save tokens to HDF5.")
-    parser.add_argument("--train_dir", type=str, default="data/train", help="Directory containing training .jsonl.zst files.")
-    parser.add_argument("--val_dir", type=str, default="data/val", help="Directory containing validation .jsonl.zst files.")
-    parser.add_argument("--out_train_file", type=str, default="data/train/pile_train.h5", help="Path to the output training HDF5 file.")
-    parser.add_argument("--out_val_file", type=str, default="data/val/pile_dev.h5", help="Path to the output validation HDF5 file.")
-    parser.add_argument("--tokenizer_name", type=str, default="r50k_base", help="Name of the tiktoken tokenizer to use.")
-    parser.add_argument("--max_data", type=int, default=1000, help="Maximum number of json objects to process from each file in both train and val datasets (default: 1000).")
+                    buffer.extend(encoder.encode_ordinary(text))
+                    buffer.append(encoder.eot_token)
+                    kept_docs += 1
+                    if len(buffer) >= write_chunk_tokens:
+                        flush()
+            flush()
 
+    os.replace(part_path, output_path)
+    print(
+        f"完成：{output_path}；读取 {total_lines} 条，写入 {kept_docs} 条，"
+        f"跳过 {skipped_docs} 条，token 数 {total_tokens:,}"
+    )
+    return total_tokens
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="将 Pile 训练集和验证集从 .jsonl.zst 分词为 HDF5。"
+    )
+    parser.add_argument("--train_dir", default="data/train", help="训练集原始文件目录")
+    parser.add_argument("--val_dir", default="data/val", help="验证集原始文件目录")
+    parser.add_argument(
+        "--out_train_file", default="data/train/pile_train.h5", help="训练集 HDF5 路径"
+    )
+    parser.add_argument(
+        "--out_val_file", default="data/val/pile_dev.h5", help="验证集 HDF5 路径"
+    )
+    parser.add_argument(
+        "--tokenizer_name", default="r50k_base", help="tiktoken 编码名称"
+    )
+    limit = parser.add_mutually_exclusive_group()
+    limit.add_argument(
+        "--max_data",
+        type=positive_int,
+        default=1000,
+        help="每个原始文件最多处理的记录数，默认 1000",
+    )
+    limit.add_argument(
+        "--all_data", action="store_true", help="处理每个原始文件中的全部记录"
+    )
+    parser.add_argument(
+        "--write_chunk_tokens",
+        type=positive_int,
+        default=WRITE_CHUNK_TOKENS,
+        help=f"每批写入 HDF5 的 token 数，默认 {WRITE_CHUNK_TOKENS:,}",
+    )
     args = parser.parse_args()
 
-    # Validate the existence of the training and validation directories
-    if not os.path.isdir(args.train_dir):
-        print(f"Error: Training directory not found: {args.train_dir}")
-        return
-    if not os.path.isdir(args.val_dir):
-        print(f"Error: Validation directory not found: {args.val_dir}")
-        return
+    for directory in (args.train_dir, args.val_dir):
+        if not Path(directory).is_dir():
+            parser.error(f"目录不存在：{directory}")
+    if Path(args.out_train_file).resolve() == Path(args.out_val_file).resolve():
+        parser.error("训练集和验证集输出路径不能相同")
 
-    # Process training data
-    print("Starting training data preprocessing...")
-    process_files(args.train_dir, args.out_train_file, args.tokenizer_name, args.max_data)
-    print("Training data preprocessing complete.")
+    max_data = None if args.all_data else args.max_data
+    if max_data is None:
+        print("处理每个文件中的全部记录。")
+    else:
+        print(f"每个文件最多处理 {max_data} 条记录。")
+    process_files(
+        args.train_dir,
+        args.out_train_file,
+        args.tokenizer_name,
+        max_data,
+        args.write_chunk_tokens,
+    )
+    process_files(
+        args.val_dir,
+        args.out_val_file,
+        args.tokenizer_name,
+        max_data,
+        args.write_chunk_tokens,
+    )
 
-    # Process validation data
-    print("Starting validation data preprocessing...")
-    process_files(args.val_dir, args.out_val_file, args.tokenizer_name, args.max_data)
-    print("Validation data preprocessing complete.")
 
-# Entry point of the script
 if __name__ == "__main__":
     main()
