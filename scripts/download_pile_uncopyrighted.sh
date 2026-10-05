@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# 下载 monology/pile-uncopyrighted：30 个训练分片，以及验证集和测试集。
-# 用法：bash pretrain/download_pile_uncopyrighted.sh /path/to/pile
+# 下载 monology/pile-uncopyrighted：30 个训练分片、验证集和测试集。
+# 从仓库根目录运行，替换为自己的存储路径：
+#   bash scripts/download_pile_uncopyrighted.sh /path/to/pile
+# 输出到 /path/to/pile/train、/path/to/pile/val 和 /path/to/pile/test。
+# 下载中断后重新执行同一命令即可续传；依赖 Bash、curl 和 sha256sum（或 shasum）。
 
 set -euo pipefail
 

@@ -1,4 +1,10 @@
-"""Download Pile shards with HTTP range resume and bounded retries."""
+# Pile 原始数据下载示例（从仓库根目录运行）：
+#   python3 scripts/data_download.py --train_max 1 \
+#     --train_dir /path/to/pile/train \
+#     --val_dir /path/to/pile/val \
+#     --download_test --test_dir /path/to/pile/test
+# 上例下载验证集、测试集和第 00 个训练分片；--train_max 30 下载全部训练分片。
+# 不需要测试集时省略 --download_test。依赖 requests 和 tqdm。
 
 import argparse
 import os
@@ -12,6 +18,7 @@ from tqdm import tqdm
 
 BASE_URL = "https://hf-mirror.com/datasets/monology/pile-uncopyrighted/resolve/main"
 VAL_URL = f"{BASE_URL}/val.jsonl.zst"
+TEST_URL = f"{BASE_URL}/test.jsonl.zst"
 TRAIN_SHARD_COUNT = 30  # train/00.jsonl.zst through train/29.jsonl.zst
 TRAIN_URLS = [f"{BASE_URL}/train/{i:02d}.jsonl.zst" for i in range(TRAIN_SHARD_COUNT)]
 
@@ -214,9 +221,15 @@ def download_dataset(
     train_dir: str,
     max_train_files: int,
     max_retries: int = MAX_RETRIES,
+    test_url: Optional[str] = None,
+    test_dir: Optional[str] = None,
 ) -> None:
-    """Download the validation file and the requested training shards."""
+    """下载验证集、可选测试集和指定数量的训练分片。"""
     download_file(val_url, os.path.join(val_dir, "val.jsonl.zst"), max_retries)
+    if test_url is not None:
+        if test_dir is None:
+            raise ValueError("test_dir is required when test_url is provided")
+        download_file(test_url, os.path.join(test_dir, "test.jsonl.zst"), max_retries)
     for idx, url in enumerate(train_urls[:max_train_files]):
         download_file(url, os.path.join(train_dir, f"{idx:02d}.jsonl.zst"), max_retries)
 
@@ -233,6 +246,13 @@ def main() -> None:
         "--val_dir", default="data/val", help="Directory for validation data."
     )
     parser.add_argument(
+        "--download_test", action="store_true", help="Also download the test file."
+    )
+    parser.add_argument(
+        "--test_dir", default="data/test",
+        help="Directory for test data when --download_test is set.",
+    )
+    parser.add_argument(
         "--max_retries", type=int, default=MAX_RETRIES,
         help=f"Retries per file after transient errors (default: {MAX_RETRIES}).",
     )
@@ -244,9 +264,17 @@ def main() -> None:
 
     os.makedirs(args.train_dir, exist_ok=True)
     os.makedirs(args.val_dir, exist_ok=True)
+    if args.download_test:
+        os.makedirs(args.test_dir, exist_ok=True)
     download_dataset(
-        VAL_URL, TRAIN_URLS, args.val_dir, args.train_dir,
-        args.train_max, args.max_retries,
+        VAL_URL,
+        TRAIN_URLS,
+        args.val_dir,
+        args.train_dir,
+        args.train_max,
+        args.max_retries,
+        test_url=TEST_URL if args.download_test else None,
+        test_dir=args.test_dir if args.download_test else None,
     )
     print("Dataset downloaded successfully.")
 
