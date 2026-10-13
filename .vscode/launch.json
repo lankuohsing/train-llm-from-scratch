@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pile: 调试 val_small 预处理",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/data_preprocess.py",
+      "cwd": "${workspaceFolder}",
+      "python": "/Users/guoxing.lan/miniforge3/envs/py312/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "--val_only",
+        "--val_dir",
+        "${env:HOME}/projects/datasets/pretrain/pile/val_small",
+        "--out_val_file",
+        "${workspaceFolder}/data/debug/pile_val_small.h5",
+        "--all_data",
+        "--write_chunk_tokens",
+        "10000",
+        "--debug_tokens_json",
+        "${workspaceFolder}/data/debug/pile_val_small_tokens.json"
+      ],
+      "env": {
+        "TIKTOKEN_CACHE_DIR": "${workspaceFolder}/data/tiktoken_cache"
+      }
+    }
+  ]
+}
