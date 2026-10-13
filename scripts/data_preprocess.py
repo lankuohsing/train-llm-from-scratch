@@ -1,17 +1,36 @@
 r"""将下载好的 Pile .jsonl 或 .jsonl.zst 文件分词并写入 HDF5。
 
+输入 / 输出一览
+----------------
+输入（原始文本，尚未分词，仓库之外）：
+    --train_dir    训练集原始 .jsonl / .jsonl.zst 所在目录（默认 data/train）
+    --val_dir      验证集原始 .jsonl / .jsonl.zst 所在目录（默认 data/val）
+    本地调试时原始数据通常指向例如 ~/projects/datasets/pretrain/pile/val_small。
+
+输出（分词后的 token，整数 id 数组）：
+    --out_train_file   训练集 token HDF5（默认 data/train/pile_train.h5）
+    --out_val_file     验证集 token HDF5（默认 data/val/pile_dev.h5）
+    --debug_tokens_json 仅本地调试：额外把验证集完整 token 序列写成 JSON
+                        （例如 data/tokens_local/pile_val_small_tokens.json）
+
+目录约定：
+    data/tokens_local/   仅本地调试用的小样本 token 产物（含肉眼查看的 JSON）
+    data/train/          正式训练的 token（pile_train.h5）
+    data/val/            正式验证的 token（pile_dev.h5）
+
 默认每个文件只处理前 1000 条记录；传入 --all_data 处理完整文件。
 
 本地验证集样本调试示例（在仓库根目录运行）：
     python3 scripts/data_preprocess.py --val_only \
         --val_dir /path/to/val_small \
-        --out_val_file data/debug/pile_val_small.h5 \
-        --debug_tokens_json data/debug/pile_val_small_tokens.json \
+        --out_val_file data/tokens_local/pile_val_small.h5 \
+        --debug_tokens_json data/tokens_local/pile_val_small_tokens.json \
         --all_data
 
---debug_tokens_json 仅供本地调试：把完整 token 序列额外写成 JSON 方便肉眼
-核对分词结果；服务器正式跑数据时不要传该参数。同样地，--write_chunk_tokens
-在生产环境保持默认值、--max_data 用 --all_data 覆盖即可。
+仅本地调试用选项说明：
+    --debug_tokens_json 仅供本地调试：把完整 token 序列额外写成 JSON 方便肉眼
+    核对分词结果；服务器正式跑数据时不要传该参数。同样地，--write_chunk_tokens
+    在生产环境保持默认值、--max_data 用 --all_data 覆盖即可。
 """
 
 import argparse
@@ -216,7 +235,7 @@ def main() -> None:
     ):
         parser.error("训练集和验证集输出路径不能相同")
 
-    max_data = None if args.all_data else args.max_data
+    max_data = None if args.all_data else args.max_data # all_data可以覆盖掉max_data
     if max_data is None:
         print("处理每个文件中的全部记录。")
     else:

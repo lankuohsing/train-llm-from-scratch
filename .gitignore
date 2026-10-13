@@ -20,3 +20,5 @@ models/
 *.jsonl
 wandb/
 /ephemeral/
+
+.DS_Store
