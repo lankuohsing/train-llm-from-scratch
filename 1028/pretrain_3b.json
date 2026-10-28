@@ -1,0 +1,34 @@
+{
+  "arch": "classic",
+  "vocab_size": 50304,
+  "context_length": 1024,
+  "n_embed": 2048,
+  "n_head": 16,
+  "n_blocks": 64,
+  "tie_embeddings": false,
+
+  "_comment_data": "data_loader 只支持单文件，30 分片需先合并为 pile_train_all.h5",
+  "train_path": "data/pile/pile_train_all.h5",
+  "dev_path":   "data/pile/pile_dev.h5",
+
+  "_comment_batch": "tokens/step = 1 * 128 * 8 * 1024 = 1,048,576; 30B / 1.05M ≈ 28,600 步 (1 epoch)",
+  "batch_size": 1,
+  "grad_accum": 128,
+  "train_steps": 28600,
+  "warmup_steps": 500,
+  "eval_steps": 500,
+  "eval_iters": 50,
+  "save_every": 500,
+
+  "optimizer": "adamw",
+  "lr_schedule": "cosine",
+  "lr": 2.5e-4,
+  "min_lr": 2.5e-5,
+  "weight_decay": 0.1,
+  "grad_clip": 1.0,
+
+  "amp_dtype": "bf16",
+  "compile": false,
+
+  "out_ckpt": "models/pretrain_3b.pt"
+}
